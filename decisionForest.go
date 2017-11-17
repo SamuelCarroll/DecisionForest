@@ -3,12 +3,16 @@ package main
 import (
 	"fmt"
 	"math/rand"
+	"strconv"
 	"time"
 
 	"github.com/SamuelCarroll/DataTypes"
 	"github.com/SamuelCarroll/DecisionTree"
 	"github.com/SamuelCarroll/readFile"
 )
+
+//CLASSES is the number of classes we have for a particular dataset
+const CLASSES = 3
 
 func main() {
 	//TODO find out why I'm always guessing we have class 2
@@ -22,18 +26,20 @@ func main() {
 	//call bagging, get back a slice of training data and a slice of testing data
 	trainSets, testSets := bagging(allData)
 
+	testRead(allData)
+
 	for _, trainData := range trainSets {
-		decTree = decTree.Train(trainData, setVal, stopCond)
+		decTree = decTree.Train(trainData, setVal, stopCond, CLASSES)
 		decForest = append(decForest, decTree)
 	}
 
 	totalElems, totalMisclassified := 0, 0
-	for _, testData := range testSets {
+	for i, testData := range testSets {
 		misclassified := 0
-		//fmt.Printf("Test Set: %d\n", i)
-		// fmt.Printf("+-----------+----------+\n")
-		// fmt.Printf("| Predicted |  Actual  |\n")
-		// fmt.Printf("+-----------+----------+\n")
+		fmt.Printf("Test Set: %d\n", i)
+		fmt.Printf("+-----------+----------+\n")
+		fmt.Printf("| Predicted |  Actual  |\n")
+		fmt.Printf("+-----------+----------+\n")
 
 		for _, elem := range testData {
 			var guesses []int
@@ -47,18 +53,60 @@ func main() {
 			if prediction != elem.Class {
 				misclassified++
 			}
-			// fmt.Printf("|     %d     |     %d    |\n", prediction, elem.Class)
+			fmt.Printf("|     %d     |     %d    |\n", prediction, elem.Class)
 		}
-		// fmt.Printf("+-----------+----------+\n")
-		//
-		// fmt.Printf("%d out of %d wrongly classified\n", misclassified, len(testData))
-		// fmt.Printf("Misclassified: %f%%\n", float64(misclassified)/float64(len(testData))*100.0)
+		fmt.Printf("+-----------+----------+\n")
+
+		fmt.Printf("%d out of %d wrongly classified\n", misclassified, len(testData))
+		fmt.Printf("Misclassified: %f%%\n", float64(misclassified)/float64(len(testData))*100.0)
 		totalElems += len(testData)
 		totalMisclassified += misclassified
 	}
 	fmt.Println("Final Forest Results:")
 	fmt.Printf("%d out of %d wrongly classified\n", totalMisclassified, totalElems)
 	fmt.Printf("Misclassified: %f%%\n", float64(totalMisclassified)/float64(totalElems)*100.0)
+
+	for i, tree := range decForest {
+		tree.WriteTree("tree" + strconv.Itoa(i) + ".txt")
+	}
+}
+
+func testRead(dataSet []*dataTypes.Data) {
+	var decForest []DecisionTree.Tree
+	misclassified := 0
+
+	for i := 0; i < 5; i++ {
+		var tempTree DecisionTree.Tree
+		err := tempTree.ReadTree("tree" + strconv.Itoa(i) + ".txt")
+		if err != nil {
+			fmt.Println(err)
+			return
+		}
+		decForest = append(decForest, tempTree)
+	}
+
+	fmt.Printf("+-----------+----------+\n")
+	fmt.Printf("| Predicted |  Actual  |\n")
+	fmt.Printf("+-----------+----------+\n")
+
+	for _, elem := range dataSet {
+		var guesses []int
+		for _, tree := range decForest {
+			estimatedClass := tree.GetClass(*elem)
+
+			guesses = append(guesses, estimatedClass)
+		}
+
+		prediction := getMajority(guesses)
+		if prediction != elem.Class {
+			misclassified++
+		}
+		fmt.Printf("|     %d     |     %d    |\n", prediction, elem.Class)
+	}
+	fmt.Printf("+-----------+----------+\n")
+
+	fmt.Printf("%d out of %d wrongly classified\n", misclassified, len(dataSet))
+	fmt.Printf("Misclassified: %f%%\n", float64(misclassified)/float64(len(dataSet))*100.0)
 }
 
 func bagging(allData []*dataTypes.Data) ([][]*dataTypes.Data, [][]*dataTypes.Data) {
