@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"math"
 	"math/rand"
 	"strconv"
 	"time"
@@ -9,13 +10,14 @@ import (
 	"github.com/SamuelCarroll/DataTypes"
 	"github.com/SamuelCarroll/DecisionTree"
 	"github.com/SamuelCarroll/readFile"
+
+	"gonum.org/v1/gonum/mat"
 )
 
 //CLASSES is the number of classes we have for a particular dataset
 const CLASSES = 3
 
 func main() {
-	//TODO find out why I'm always guessing we have class 2
 	var decTree DecisionTree.Tree
 	var decForest []DecisionTree.Tree
 	setVal := 100000000000.0 //big value to ignore a already used split feature value
@@ -23,52 +25,119 @@ func main() {
 	rand.Seed(time.Now().UTC().UnixNano())
 
 	allData := readFile.Read("/home/ritadev/Documents/Thesis_Work/Decision-Tree/wine.data")
+
 	//call bagging, get back a slice of training data and a slice of testing data
 	trainSets, testSets := bagging(allData)
 
-	testRead(allData)
+	// uncomment the following line to test the reading of a Decision Tree
+	// testRead(allData)
 
+	start := time.Now()
 	for _, trainData := range trainSets {
 		decTree = decTree.Train(trainData, setVal, stopCond, CLASSES)
 		decForest = append(decForest, decTree)
 	}
+	elapsed := time.Since(start)
+	fmt.Println("It took ", elapsed, " to train the forest")
 
-	totalElems, totalMisclassified := 0, 0
-	for i, testData := range testSets {
-		misclassified := 0
-		fmt.Printf("Test Set: %d\n", i)
-		fmt.Printf("+-----------+----------+\n")
-		fmt.Printf("| Predicted |  Actual  |\n")
-		fmt.Printf("+-----------+----------+\n")
+	// totalElems, totalMisclassified := 0, 0
+	// for i, testData := range testSets {
+	misclassified := 0
+	// fmt.Printf("Test Set: %d\n", i)
+	// fmt.Printf("+-----------+----------+\n")
+	// fmt.Printf("| Predicted |  Actual  |\n")
+	// fmt.Printf("+-----------+----------+\n")
 
-		for _, elem := range testData {
-			var guesses []int
-			for _, tree := range decForest {
-				estimatedClass := tree.GetClass(*elem)
+	start = time.Now()
+	for _, elem := range testSets /*testData*/ {
+		var guesses []int
+		for _, tree := range decForest {
+			estimatedClass := tree.GetClass(*elem)
 
-				guesses = append(guesses, estimatedClass)
-			}
-
-			prediction := getMajority(guesses)
-			if prediction != elem.Class {
-				misclassified++
-			}
-			fmt.Printf("|     %d     |     %d    |\n", prediction, elem.Class)
+			guesses = append(guesses, estimatedClass)
 		}
-		fmt.Printf("+-----------+----------+\n")
 
-		fmt.Printf("%d out of %d wrongly classified\n", misclassified, len(testData))
-		fmt.Printf("Misclassified: %f%%\n", float64(misclassified)/float64(len(testData))*100.0)
-		totalElems += len(testData)
-		totalMisclassified += misclassified
+		prediction := getMajority(guesses)
+		if prediction != elem.Class {
+			misclassified++
+		}
+		// fmt.Printf("|     %d     |     %d    |\n", prediction, elem.Class)
 	}
-	fmt.Println("Final Forest Results:")
-	fmt.Printf("%d out of %d wrongly classified\n", totalMisclassified, totalElems)
-	fmt.Printf("Misclassified: %f%%\n", float64(totalMisclassified)/float64(totalElems)*100.0)
+	elapsed = time.Since(start)
+	fmt.Println("It took ", elapsed, " to test the forest")
 
+	// fmt.Printf("+-----------+----------+\n")
+
+	fmt.Printf("%d out of %d wrongly classified\n", misclassified, len(testSets) /*len(testData)*/)
+	// fmt.Printf("Misclassified: %f%%\n", float64(misclassified)/float64(len(testData))*100.0)
+	fmt.Printf("Misclassified: %f%%\n", float64(misclassified)/float64(len(testSets)))
+	// totalElems += len(testSets) //len(testData)
+	// totalMisclassified += misclassified
+	// }
+	// fmt.Println("Final Forest Results:")
+	// fmt.Printf("%d out of %d wrongly classified\n", totalMisclassified, totalElems)
+	// fmt.Printf("Misclassified: %f%%\n", float64(totalMisclassified)/float64(totalElems)*100.0)
+
+	var fastDensities [][]float64
+	start = time.Now()
+	for _, trainSet := range trainSets {
+		_, den := getRFDiss(decForest, trainSet)
+		fastDensities = append(fastDensities, den)
+	}
+	elapsed = time.Since(start)
+	fmt.Println("It took ", elapsed, " to generate the diss matrix")
+
+	// Uncomment the following lines to write the DF to files
+	// for i, tree := range decForest {
+	// 	tree.WriteTree("tree" + strconv.Itoa(i) + ".txt")
+	// }
+}
+
+//TODO create some test conditions to see if we have this programmed correctly
+func getRFDiss(decForest []DecisionTree.Tree, trainData []*dataTypes.Data) (*mat.Dense, []float64) {
+	numTrees := len(decForest)
+	dataLen := len(trainData)
+	treeResults := make([]*DecisionTree.Tree, numTrees*dataLen)
+	rfSlice := make([]float64, dataLen*dataLen)
+
+	fmt.Println("We have ", numTrees, " trees, and ", dataLen, " pieces of data")
+	fmt.Println("We have a total length of ", len(treeResults))
 	for i, tree := range decForest {
-		tree.WriteTree("tree" + strconv.Itoa(i) + ".txt")
+		for j, datum := range trainData {
+			treeResults[(i*numTrees)+j] = tree.GetTerminalNode(*datum)
+		}
 	}
+
+	fmt.Println("Starting the second check")
+	for i := 0; i < dataLen; i++ {
+		elem1 := treeResults[i]
+		for j, elem2 := range treeResults {
+			jMod := j % dataLen
+			if elem1 == elem2 {
+				fmt.Println("Value ", i*dataLen+jMod)
+				rfSlice[i*dataLen+jMod] += 1.0
+			}
+		}
+	}
+
+	fmt.Println("Starting the third check")
+	for i, val := range rfSlice {
+		rfSlice[i] = math.Sqrt(1.0 - (val / float64(numTrees)))
+	}
+
+	rfMat := mat.NewDense(dataLen, dataLen, rfSlice)
+
+	return rfMat, rfSlice
+}
+
+//TODO generate a []*dataTypes.Data of synthetic data labeled 1 append to
+//observed and return
+func genSynthetic(observed []*dataTypes.Data) []*dataTypes.Data {
+	for _, observation := range observed {
+		observation.Class = 0
+	}
+
+	return observed
 }
 
 func testRead(dataSet []*dataTypes.Data) {
@@ -109,7 +178,7 @@ func testRead(dataSet []*dataTypes.Data) {
 	fmt.Printf("Misclassified: %f%%\n", float64(misclassified)/float64(len(dataSet))*100.0)
 }
 
-func bagging(allData []*dataTypes.Data) ([][]*dataTypes.Data, [][]*dataTypes.Data) {
+func bagging(allData []*dataTypes.Data) ([][]*dataTypes.Data, []*dataTypes.Data) {
 	dataLen := len(allData)
 
 	//30 Training error went between ~6.2% and ~39.2% Average around 20.699% error
@@ -118,8 +187,9 @@ func bagging(allData []*dataTypes.Data) ([][]*dataTypes.Data, [][]*dataTypes.Dat
 	//15 Training error was between ~5% and ~14.5% Average around 12.39% error
 	//10 Training error was between ~6.9% and ~12.0% Average around 9.330% error
 	//5 Training error was between ~1.2% and ~10.8% Average around 8.2
-	kclassifiers := 5
-	var trainSets, testSets [][]*dataTypes.Data
+	kclassifiers := 1000
+	var trainSets [][]*dataTypes.Data
+	var testSets []*dataTypes.Data
 
 	//Generate a number of sets to train different trees on that data
 	for i := 0; i < kclassifiers; i++ {
@@ -137,7 +207,7 @@ func bagging(allData []*dataTypes.Data) ([][]*dataTypes.Data, [][]*dataTypes.Dat
 
 		newTestSet = getNewTestSet(allData, usedIndices, dataLen)
 		trainSets = append(trainSets, newTrainSet)
-		testSets = append(testSets, newTestSet)
+		testSets = append(testSets, newTestSet...)
 	}
 
 	return trainSets, testSets
