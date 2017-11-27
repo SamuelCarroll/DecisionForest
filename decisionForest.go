@@ -100,27 +100,22 @@ func getRFDiss(decForest []DecisionTree.Tree, trainData []*dataTypes.Data) (*mat
 	treeResults := make([]*DecisionTree.Tree, numTrees*dataLen)
 	rfSlice := make([]float64, dataLen*dataLen)
 
-	fmt.Println("We have ", numTrees, " trees, and ", dataLen, " pieces of data")
-	fmt.Println("We have a total length of ", len(treeResults))
 	for i, tree := range decForest {
 		for j, datum := range trainData {
-			treeResults[(i*numTrees)+j] = tree.GetTerminalNode(*datum)
+			treeResults[(i*dataLen)+j] = tree.GetTerminalNode(*datum)
 		}
 	}
 
-	fmt.Println("Starting the second check")
 	for i := 0; i < dataLen; i++ {
 		elem1 := treeResults[i]
 		for j, elem2 := range treeResults {
 			jMod := j % dataLen
 			if elem1 == elem2 {
-				fmt.Println("Value ", i*dataLen+jMod)
 				rfSlice[i*dataLen+jMod] += 1.0
 			}
 		}
 	}
 
-	fmt.Println("Starting the third check")
 	for i, val := range rfSlice {
 		rfSlice[i] = math.Sqrt(1.0 - (val / float64(numTrees)))
 	}
@@ -187,7 +182,7 @@ func bagging(allData []*dataTypes.Data) ([][]*dataTypes.Data, []*dataTypes.Data)
 	//15 Training error was between ~5% and ~14.5% Average around 12.39% error
 	//10 Training error was between ~6.9% and ~12.0% Average around 9.330% error
 	//5 Training error was between ~1.2% and ~10.8% Average around 8.2
-	kclassifiers := 1000
+	kclassifiers := 500
 	var trainSets [][]*dataTypes.Data
 	var testSets []*dataTypes.Data
 
