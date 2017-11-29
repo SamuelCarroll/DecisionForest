@@ -15,7 +15,7 @@ import (
 )
 
 //CLASSES is the number of classes we have for a particular dataset
-const CLASSES = 3
+const CLASSES = 2
 
 func main() {
 	var decTree DecisionTree.Tree
@@ -25,12 +25,13 @@ func main() {
 	rand.Seed(time.Now().UTC().UnixNano())
 
 	allData := readFile.Read("/home/ritadev/Documents/Thesis_Work/Decision-Tree/wine.data")
+	allData = genSynthetic(allData)
 
 	//call bagging, get back a slice of training data and a slice of testing data
 	trainSets, testSets := bagging(allData)
 
 	// uncomment the following line to test the reading of a Decision Tree
-	// testRead(allData)
+	testRead(allData)
 
 	start := time.Now()
 	for _, trainData := range trainSets {
@@ -78,19 +79,19 @@ func main() {
 	// fmt.Printf("%d out of %d wrongly classified\n", totalMisclassified, totalElems)
 	// fmt.Printf("Misclassified: %f%%\n", float64(totalMisclassified)/float64(totalElems)*100.0)
 
-	var fastDensities [][]float64
-	start = time.Now()
-	for _, trainSet := range trainSets {
-		_, den := getRFDiss(decForest, trainSet)
-		fastDensities = append(fastDensities, den)
-	}
-	elapsed = time.Since(start)
-	fmt.Println("It took ", elapsed, " to generate the diss matrix")
+	// var fastDensities [][]float64
+	// start = time.Now()
+	// for _, trainSet := range trainSets {
+	// 	_, den := getRFDiss(decForest, trainSet)
+	// 	fastDensities = append(fastDensities, den)
+	// }
+	// elapsed = time.Since(start)
+	// fmt.Println("It took ", elapsed, " to generate the diss matrix")
 
 	// Uncomment the following lines to write the DF to files
-	// for i, tree := range decForest {
-	// 	tree.WriteTree("tree" + strconv.Itoa(i) + ".txt")
-	// }
+	for i, tree := range decForest {
+		tree.WriteTree("tree" + strconv.Itoa(i) + ".txt")
+	}
 }
 
 //TODO create some test conditions to see if we have this programmed correctly
@@ -125,14 +126,91 @@ func getRFDiss(decForest []DecisionTree.Tree, trainData []*dataTypes.Data) (*mat
 	return rfMat, rfSlice
 }
 
-//TODO generate a []*dataTypes.Data of synthetic data labeled 1 append to
-//observed and return
 func genSynthetic(observed []*dataTypes.Data) []*dataTypes.Data {
-	for _, observation := range observed {
-		observation.Class = 0
+	//Find averages and standard deviation to generate synthetic data
+	averages := getAverages(observed)
+	stdDev := getStdDev(observed, averages)
+
+	// ensure we don't have something that is too short may have problems if we do
+	if len(observed) == 0 || len(averages) == 0 || len(stdDev) == 0 {
+		return nil
+	}
+
+	//Label observed data as zero
+	for _, ob := range observed {
+		ob.Class = 1
+	}
+
+	//Add a length of synthetic data that is about a third the length of the observed data
+	numSyn := int(0.333 * float64(len(observed)))
+	for loop := 0; loop < numSyn; loop++ {
+		newSyn := new(dataTypes.Data)
+		newSyn.Class = 2
+
+		//loop over the number of features each observation has
+		for i := range averages {
+			avg := DecisionTree.GetFloatReflectVal(averages[i])
+			sd := DecisionTree.GetFloatReflectVal(stdDev[i])
+
+			synVal := rand.NormFloat64()*sd + avg
+			newSyn.FeatureSlice = append(newSyn.FeatureSlice, synVal)
+		}
+
+		//Append the new synthetic data point to the data we have
+		observed = append(observed, newSyn)
 	}
 
 	return observed
+}
+
+func getAverages(observations []*dataTypes.Data) []interface{} {
+	var averages []interface{}
+
+	for _, ob := range observations {
+		for i := range ob.FeatureSlice {
+			if len(averages)-1 < i {
+				averages = append(averages, 0.0)
+			}
+			//reflect the type of the feature slice index handle float, bool and string (don't worry about bool and str yet)
+			switch val := ob.FeatureSlice[i].(type) {
+			case float64:
+				temp := float64(val)
+				averages[i] = DecisionTree.GetFloatReflectVal(averages[i]) + temp
+			case bool:
+				temp := 0.0
+				if val {
+					temp = 1.0
+				}
+				averages[i] = DecisionTree.GetFloatReflectVal(averages[i]) + temp
+			}
+		}
+	}
+
+	numObs := len(observations)
+	for i, avgSum := range averages {
+		averages[i] = DecisionTree.GetFloatReflectVal(avgSum) / float64(numObs)
+	}
+
+	return averages
+}
+
+func getStdDev(observations []*dataTypes.Data, averages []interface{}) []interface{} {
+	var stdDev []interface{}
+
+	for i, avg := range averages {
+		sumVal := 0.0
+		avgFloat := DecisionTree.GetFloatReflectVal(avg)
+
+		for _, ob := range observations {
+			obFloat := DecisionTree.GetFloatReflectVal(ob.FeatureSlice[i])
+			sumVal += math.Pow((obFloat - avgFloat), 2.0)
+		}
+
+		numObs := float64(len(observations))
+		stdDev = append(stdDev, sumVal/numObs)
+	}
+
+	return stdDev
 }
 
 func testRead(dataSet []*dataTypes.Data) {
@@ -176,13 +254,7 @@ func testRead(dataSet []*dataTypes.Data) {
 func bagging(allData []*dataTypes.Data) ([][]*dataTypes.Data, []*dataTypes.Data) {
 	dataLen := len(allData)
 
-	//30 Training error went between ~6.2% and ~39.2% Average around 20.699% error
-	//25 Training error went between ~7.5% and ~16.5% Average around 11.896% error
-	//20 Training error went between ~7.7% and ~16.0% Average around 10.939% error
-	//15 Training error was between ~5% and ~14.5% Average around 12.39% error
-	//10 Training error was between ~6.9% and ~12.0% Average around 9.330% error
-	//5 Training error was between ~1.2% and ~10.8% Average around 8.2
-	kclassifiers := 500
+	kclassifiers := 1000
 	var trainSets [][]*dataTypes.Data
 	var testSets []*dataTypes.Data
 
