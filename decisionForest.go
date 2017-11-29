@@ -71,7 +71,7 @@ func main() {
 
 	fmt.Printf("%d out of %d wrongly classified\n", misclassified, len(testSets) /*len(testData)*/)
 	// fmt.Printf("Misclassified: %f%%\n", float64(misclassified)/float64(len(testData))*100.0)
-	fmt.Printf("Misclassified: %f%%\n", float64(misclassified)/float64(len(testSets)))
+	fmt.Printf("Misclassified: %f%%\n", float64(misclassified)/float64(len(testSets)*100.0))
 	// totalElems += len(testSets) //len(testData)
 	// totalMisclassified += misclassified
 	// }
@@ -128,11 +128,11 @@ func getRFDiss(decForest []DecisionTree.Tree, trainData []*dataTypes.Data) (*mat
 
 func genSynthetic(observed []*dataTypes.Data) []*dataTypes.Data {
 	//Find averages and standard deviation to generate synthetic data
-	averages := getAverages(observed)
-	stdDev := getStdDev(observed, averages)
+	mins := getMins(observed)
+	maxs := getMaxs(observed)
 
 	// ensure we don't have something that is too short may have problems if we do
-	if len(observed) == 0 || len(averages) == 0 || len(stdDev) == 0 {
+	if len(observed) == 0 || len(mins) == 0 || len(maxs) == 0 {
 		return nil
 	}
 
@@ -141,18 +141,21 @@ func genSynthetic(observed []*dataTypes.Data) []*dataTypes.Data {
 		ob.Class = 1
 	}
 
-	//Add a length of synthetic data that is about a third the length of the observed data
-	numSyn := int(0.333 * float64(len(observed)))
+	//Add a length of synthetic data that is half the length of the observed data
+	//I discovered that increasing the amount of synthetic data increased the accuracy of the classifier
+	numSyn := int(0.5 * float64(len(observed)))
 	for loop := 0; loop < numSyn; loop++ {
 		newSyn := new(dataTypes.Data)
 		newSyn.Class = 2
 
 		//loop over the number of features each observation has
-		for i := range averages {
-			avg := DecisionTree.GetFloatReflectVal(averages[i])
-			sd := DecisionTree.GetFloatReflectVal(stdDev[i])
+		for i := range mins {
+			min := DecisionTree.GetFloatReflectVal(mins[i])
+			max := DecisionTree.GetFloatReflectVal(maxs[i])
 
-			synVal := rand.NormFloat64()*sd + avg
+			tempSD := (max - min) / float64(len(observed))
+
+			synVal := rand.NormFloat64()*tempSD + min
 			newSyn.FeatureSlice = append(newSyn.FeatureSlice, synVal)
 		}
 
@@ -161,6 +164,58 @@ func genSynthetic(observed []*dataTypes.Data) []*dataTypes.Data {
 	}
 
 	return observed
+}
+
+func getMins(observations []*dataTypes.Data) []interface{} {
+	var mins []interface{}
+
+	for _, ob := range observations {
+		for i := range ob.FeatureSlice {
+			if len(mins)-1 < i {
+				mins = append(mins, 100000000.000)
+			}
+
+			switch val := ob.FeatureSlice[i].(type) {
+			case float64:
+				temp := float64(val)
+				if temp < DecisionTree.GetFloatReflectVal(mins[i]) {
+					mins[i] = temp
+				}
+			case bool:
+				if val == false {
+					mins[i] = 0.0
+				}
+			}
+		}
+	}
+
+	return mins
+}
+
+func getMaxs(observations []*dataTypes.Data) []interface{} {
+	var maxs []interface{}
+
+	for _, ob := range observations {
+		for i := range ob.FeatureSlice {
+			if len(maxs)-1 < i {
+				maxs = append(maxs, -100000000.000)
+			}
+
+			switch val := ob.FeatureSlice[i].(type) {
+			case float64:
+				temp := float64(val)
+				if temp > DecisionTree.GetFloatReflectVal(maxs[i]) {
+					maxs[i] = temp
+				}
+			case bool:
+				if val == true {
+					maxs[i] = 1.0
+				}
+			}
+		}
+	}
+
+	return maxs
 }
 
 func getAverages(observations []*dataTypes.Data) []interface{} {
