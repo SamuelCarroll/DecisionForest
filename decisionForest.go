@@ -80,7 +80,7 @@ func GenForest(allData []*dataTypes.Data, numClasses, numTrees int, printRes, wr
 }
 
 //GenMatrix trains a Decision Forest and then find a Disimilarity Matrix
-func GenMatrix(allData []*dataTypes.Data, numClasses, numTrees int) (*mat.Dense, []float64) {
+func GenMatrix(allData []*dataTypes.Data, numClasses, numTrees int) (*mat.Dense, []float64, int) {
 
 	decForest, testSets := GenForest(allData, numClasses, numTrees, false, false, false)
 
@@ -90,19 +90,19 @@ func GenMatrix(allData []*dataTypes.Data, numClasses, numTrees int) (*mat.Dense,
 	elapsed := time.Since(start)
 	fmt.Println("It took ", elapsed, " to generate the diss matrix")
 
-	return rfMat, rfSlice
+	return rfMat, rfSlice, len(testSets)
 }
 
 //TODO create some test conditions to see if we have this programmed correctly
-func getRFDiss(decForest []DecisionTree.Tree, trainData []*dataTypes.Data) (*mat.Dense, []float64) {
+func getRFDiss(decForest []DecisionTree.Tree, data []*dataTypes.Data) (*mat.Dense, []float64) {
 	numTrees := len(decForest)
-	dataLen := len(trainData)
+	dataLen := len(data)
 	treeResults := make([]*DecisionTree.Tree, numTrees*dataLen)
 	rfSlice := make([]float64, dataLen*dataLen)
 
 	//start by getting the addresses of the nodes each result ends up in
 	for i, tree := range decForest {
-		for j, datum := range trainData {
+		for j, datum := range data {
 			treeResults[(i*dataLen)+j] = tree.GetTerminalNode(*datum)
 		}
 	}
