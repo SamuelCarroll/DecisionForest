@@ -13,23 +13,93 @@ import (
 	"gonum.org/v1/gonum/mat"
 )
 
+func boolFloatToStr(boolFloat float64) string {
+	if boolFloat == 0.0 {
+		return "False"
+	}
+	return "True"
+}
+
+func getString(datum dataTypes.Data, prediction int) []string {
+	var datumStr []string
+
+	datumStr = append(datumStr, strconv.Itoa(prediction))
+	datumStr = append(datumStr, datum.UID)
+
+	for _, feature := range datum.FeatureSlice {
+		var appStr string
+		switch feature.(type) {
+		case float64:
+			datum := DecisionTree.GetFloatReflectVal(feature)
+			appStr = strconv.FormatFloat(datum, 'f', 24, 64)
+		case bool:
+			datumBool := DecisionTree.GetBoolReflectVal(feature)
+			appStr = boolFloatToStr(datumBool)
+		case string:
+			appStr = DecisionTree.GetStrReflectVal(feature)
+		}
+		datumStr = append(datumStr, appStr)
+	}
+
+	return datumStr
+}
+
+func labelData(forest []DecisionTree.Tree, newData []*dataTypes.Data) []*dataTypes.Data {
+	for i, elem := range newData {
+		var guesses []int
+		for _, tree := range forest {
+			estimatedClass := tree.GetClass(*elem, i)
+
+			guesses = append(guesses, estimatedClass)
+		}
+
+		newData[i].Class = getMajority(guesses)
+	}
+
+	return newData
+}
+
+//SemiSupervisedLearning will implement a SSL method
+func SemiSupervisedLearning(labeledData, unlabeledData []*dataTypes.Data, numClasses, numTrees, generation int, printRes, writeTrees, readTrees bool, outBase string) ([]DecisionTree.Tree, []*dataTypes.Data) {
+	var supervisedForest []DecisionTree.Tree
+	//If this is the first generation we should create the inital forest
+	//If it's not the first generation we should read in the forest
+	if generation == 0 {
+		supervisedForest, _ = GenForest(labeledData, numClasses, numTrees, printRes, writeTrees, readTrees, outBase)
+	} else {
+		supervisedForest = testRead(labeledData, false, outBase, generation*numTrees)
+	}
+
+	newData := labelData(supervisedForest, unlabeledData)
+
+	for _, newDatum := range newData {
+		labeledData = append(labeledData, newDatum)
+	}
+
+	finalForest, finalData := GenForest(labeledData, numClasses, numTrees, printRes, writeTrees, readTrees, outBase)
+
+	return finalForest, finalData
+}
+
 //GenForest builds a decision tree of a specified size with a given number of classes and returns the forest and the data used to test the tree
 func GenForest(allData []*dataTypes.Data, numClasses, numTrees int, printRes, writeTrees, readTrees bool, outBase string) ([]DecisionTree.Tree, []*dataTypes.Data) {
 	var decTree DecisionTree.Tree
 	var decForest []DecisionTree.Tree
 	setVal := 100000000000.0 //big value to ignore a already used split feature value
-	stopCond := 0.97         //point were we stop training if we have this percent of a single class
+	stopCond := 0.85         //point were we stop training if we have this percent of a single class
 	rand.Seed(time.Now().UTC().UnixNano())
-
-	//call bagging, get back a slice of training data and a slice of testing data
-	trainSets, testSets := bagging(allData, numTrees)
 
 	//if we want to specify to read previously made trees just test that forest
 	//with all that data
 	if readTrees == true {
-		testRead(allData, outBase, numTrees)
+		testRead(allData, printRes, outBase, numTrees)
 		return nil, nil
 	}
+
+	//TODO see if we get speed boost by modifying bagging to return a single
+	//training set, put it in loop
+	//call bagging, get back a slice of training data and a slice of testing data
+	trainSets, testSets := bagging(allData, numTrees)
 
 	//get the start time of training/building the forest so we know how long it takes
 	start := time.Now()
@@ -44,18 +114,19 @@ func GenForest(allData []*dataTypes.Data, numClasses, numTrees int, printRes, wr
 	//Start testing on the OOB data
 	misclassified := 0
 	if printRes == true {
-		fmt.Printf("+-----------+----------+-------------------------+\n")
-		fmt.Printf("| Predicted |  Actual  |           UID   \t |\n")
-		fmt.Printf("+-----------+----------+-------------------------+\n")
+		//fmt.Printf("+-----------+----------+-------------------------+\n")
+		//fmt.Printf("| Predicted |  Actual  |           UID   \t |\n")
+		//fmt.Printf("+-----------+----------+-------------------------+\n")
 		start = time.Now()
 	}
 
-	//For every element in the OOB set runn it through every tree in the forest
+	//For every element in the OOB set run it through every tree in the forest
 	//To classify that given element
-	for _, elem := range testSets {
+	var allPredictions []int
+	for i, elem := range testSets {
 		var guesses []int
 		for _, tree := range decForest {
-			estimatedClass := tree.GetClass(*elem)
+			estimatedClass := tree.GetClass(*elem, i)
 
 			guesses = append(guesses, estimatedClass)
 		}
@@ -64,18 +135,21 @@ func GenForest(allData []*dataTypes.Data, numClasses, numTrees int, printRes, wr
 		if prediction != elem.Class {
 			misclassified++
 		}
-		if printRes {
-			fmt.Printf("|     %d     |     %d    |   %s\t |", prediction, elem.Class, elem.UID)
-			if prediction == 1 && elem.Class == 2 {
-				fmt.Printf("\t oops")
-			}
-			fmt.Printf("\n")
+		//if printRes {
+		//fmt.Printf("|     %d     |     %d    |   %s\t |", prediction, elem.Class, elem.UID)
+		//if prediction == 1 && elem.Class == 2 {
+		//	fmt.Printf("\t oops")
+		//}
+		//fmt.Printf("\n")
+		//}
+		if writeTrees {
+			allPredictions = append(allPredictions, prediction)
 		}
 	}
 	//Print the end of the data if we specify print
 	if printRes {
 		elapsed = time.Since(start)
-		fmt.Printf("+-----------+----------+-------------------------+\n")
+		//fmt.Printf("+-----------+----------+-------------------------+\n")
 
 		fmt.Printf("%d out of %d wrongly classified\n", misclassified, len(testSets) /*len(testData)*/)
 		fmt.Printf("Misclassified: %f%%\n", (float64(misclassified) / float64(len(testSets)) * 100.0))
@@ -124,7 +198,7 @@ func getRFDiss(decForest []DecisionTree.Tree, data []*dataTypes.Data) (*mat.Dens
 	//start by getting the addresses of the nodes each result ends up in
 	for i, tree := range decForest {
 		for j, datum := range data {
-			treeResults[(i*dataLen)+j] = tree.GetTerminalNode(*datum)
+			treeResults[(i*dataLen)+j] = tree.GetTerminalNode(*datum, j)
 		}
 	}
 
@@ -151,9 +225,14 @@ func getRFDiss(decForest []DecisionTree.Tree, data []*dataTypes.Data) (*mat.Dens
 }
 
 //This will test a forest that is stored in a series of files
-func testRead(dataSet []*dataTypes.Data, outBase string, numTrees int) {
+func testRead(dataSet []*dataTypes.Data, printRes bool, outBase string, numTrees int) []DecisionTree.Tree {
 	var decForest []DecisionTree.Tree
 	misclassified := 0
+	//Positive is anomalous, negative is normal
+	truePositive := 0
+	trueNegative := 0
+	falsePositive := 0
+	falseNegative := 0
 
 	//Read in all trees and add each tree to the forest
 	for i := 0; i < numTrees; i++ {
@@ -161,34 +240,65 @@ func testRead(dataSet []*dataTypes.Data, outBase string, numTrees int) {
 		err := tempTree.ReadTree(outBase + strconv.Itoa(i) + ".txt")
 		if err != nil {
 			fmt.Println(err)
-			return
+			return nil
 		}
 		decForest = append(decForest, tempTree)
 	}
 
-	fmt.Printf("+-----------+----------+\n")
-	fmt.Printf("| Predicted |  Actual  |\n")
-	fmt.Printf("+-----------+----------+\n")
+	fmt.Println("Forest Read")
 
-	//For each datum run it through the forest, writing the results
-	for _, elem := range dataSet {
-		var guesses []int
-		for _, tree := range decForest {
-			estimatedClass := tree.GetClass(*elem)
+	start := time.Now()
 
-			guesses = append(guesses, estimatedClass)
+	//If this is set to true we assume we want to build this all over again
+	if printRes == true {
+		// fmt.Printf("+-----------+----------+-------------------------+\n")
+		// fmt.Printf("| Predicted |  Actual  |           UID   \t |\n")
+		// fmt.Printf("+-----------+----------+-------------------------+\n")
+
+		//For each datum run it through the forest, writing the results
+		tenPercent := len(dataSet) / 10
+		datLen := len(dataSet)
+		for i, elem := range dataSet {
+			var guesses []int
+
+			if i%tenPercent == 0 {
+				fmt.Println(100*i/datLen, "% done")
+			}
+
+			for _, tree := range decForest {
+				estimatedClass := tree.GetClass(*elem, i)
+
+				guesses = append(guesses, estimatedClass)
+			}
+
+			prediction := getMajority(guesses)
+			if prediction == 1 && elem.Class == 1 {
+				trueNegative++
+			} else if prediction == 2 && elem.Class == 2 {
+				truePositive++
+			} else if prediction == 1 && elem.Class == 2 {
+				falseNegative++
+			} else if prediction == 2 && elem.Class == 1 {
+				falsePositive++
+			}
+
+			if prediction != elem.Class {
+				misclassified++
+			}
+			//fmt.Printf("|     %d     |     %d    |   %s\t |\n", prediction, elem.Class, elem.UID)
 		}
+		//fmt.Printf("+-----------+----------+-------------------------+\n")
+		elapsed := time.Since(start)
 
-		prediction := getMajority(guesses)
-		if prediction != elem.Class {
-			misclassified++
-		}
-		fmt.Printf("|     %d     |     %d    |\n", prediction, elem.Class)
+		fmt.Printf("%d out of %d wrongly classified\n", misclassified, len(dataSet))
+		fmt.Printf("Misclassified: %f%%\n", (float64(misclassified)/float64(len(dataSet)))*100.0)
+		//Positive is anomalous, negative is normal
+		fmt.Printf("\tAnom Correctly Labeled: %d\n\tNorm Correctly Labeled: %d\n", truePositive, trueNegative)
+		fmt.Printf("\tAnom incorrectly Labeled: %d\n\tNorm incorrectly Labeled: %d\n", falseNegative, falsePositive)
+		fmt.Println("It took", elapsed, "to test", len(dataSet), "elements")
 	}
-	fmt.Printf("+-----------+----------+\n")
 
-	fmt.Printf("%d out of %d wrongly classified\n", misclassified, len(dataSet))
-	fmt.Printf("Misclassified: %f%%\n", float64(misclassified)/float64(len(dataSet))*100.0)
+	return decForest
 }
 
 //bagging will randomly generate a series of different data to train the forest
